@@ -75,7 +75,7 @@ class UserLoginBehavior(TaskSet):
 
         self.client.get("/api/holidayvideo/common/holidayvideo/isAuditor", headers=self.user.headers)
     
-#学user.user.user.生查看假期作业列表
+#学生查看假期作业列表
 class HolidayTaskListBehavior(TaskSet):
 
     def on_start(self):
@@ -127,7 +127,7 @@ class HolidayTaskListBehavior(TaskSet):
         self.client.get("/api/usercenter/common/loginuserinfo/myschool", headers=self.user.headers)
 
         params={
-            "finished": False,
+            "finished": false,
             "holidayTaskId": self.holidayTaskId,
             "type": 1,
             "pageNum":1,
@@ -139,7 +139,7 @@ class HolidayTaskListBehavior(TaskSet):
         self.client.get(f"/api/homework/student/holidaytask/listshelvedcourse?holidayTaskId={self.holidayTaskId}", headers=self.user.headers)
 
 #学生查看题目加视频的打卡任务
-class WatchVideoBehavior(SequentialTaskSet):
+class WatchVideoBehavior(TaskSet):
     
     
     def on_start(self):
@@ -149,46 +149,6 @@ class WatchVideoBehavior(SequentialTaskSet):
 
     @task
     def open_watch_video_page(self):
-
-        self.client.get("/api/usercenter/common/loginuserinfo/myinfo", headers=self.user.headers)
-
-        self.client.get("/api/basicdata/common/dictionary/listbytypes?dictTypes=USERTYPE%2CSCHOOLTYPE%2CGRADEPHASE%2CGRADE%2CEXAMTYPE%2CQUESTIONTYPE%2CTCHROLE", headers=self.user.headers)
-
-        self.client.get("/api/usercenter/common/loginuserinfo/terminfo", headers=self.user.headers)
-
-        with self.client.get("/api/usercenter/common/loginuserinfo/terminfo/base", headers=self.user.headers, catch_response=True) as response:
-            if response.status_code == 200:
-                
-                try:
-                    response_data = response.json()
-                    datas = response_data.get("data",[])
-                    for data in datas:
-                        if(data["status"] == "NOW"):
-                            self.user.year = data["year"]
-                            semesters = data["semesters"]
-                            if semesters[0]["status"] == "NOW":
-                                self.user.semester = semesters[0]["semester"]
-                            else:
-                                self.user.semester = semesters[1]["semester"]
-                    response.success()
-                except Exception as e:
-                    response.failure(f"处理响应时出错: {str(e)}")
-            else:
-                response.failure(f"HTTP错误: {response.status_code}")
-        
-        params={
-            "schoolId": f"{self.user.school_id}",
-            "year": f"{self.user.year}",
-            "semester": self.user.semester
-        }
-
-        self.client.get("/api/usercenter/common/school/course/list", headers=self.user.headers, params=params)
-        
-        self.client.get("/api/usercenter/common/loginuserinfo/gatekeeper/list", headers=self.user.headers)
-     
-        self.client.get("/api/usercenter/common/loginuserinfo/modulepermission", headers=self.user.headers)
-        
-        self.client.get("/api/usercenter/common/loginuserinfo/myschool", headers=self.user.headers)
 
         self.client.get(f"/api/holidayvideo/student/holidayvideo/notice/list/byhomework?homeworkId={self.homeworkId}&videoType=VOD", headers=self.user.headers)
            
@@ -211,8 +171,135 @@ class WatchVideoBehavior(SequentialTaskSet):
         self.client.get(f"/api/holidayvideo/student/holidayvideo/feedbackScore?holidayvideoId={self.holidayVideoId}", headers=self.user.headers)    
 
     @task
-    def stop(self):
-        self.interrupt()
+    def do_feedback(self):
+
+        payload = {
+            "courseCode": "PHYSICAL",
+            "feedback": "",
+            "gradeCode": "S02",
+            "holidayvideoId": 2650,
+            "homeworkId": 31537,
+            "videoId": "20306ccc422971f08f0f5107e0c90102",
+            "score": 3
+        }
+
+        self.client.put("/api/holidayvideo/student/holidayvideo/feedback", data=json.dumps(payload), headers=self.user.headers)
+
+#学生查看拓展并完成训练（需要完善一下按查询到的未作答的题目进行提交）
+class DoOutdoorTraining(TaskSet):
+    def on_start(self):
+        self.homeworkId = 31537
+    
+    @task
+    def get_question_list(self):
+
+        self.client.get(f"/api/holidayvideo/student/holidayvideo/info?homeworkId={self.homeworkId}", headers=self.user.headers)
+
+        payload = {
+            "homeworkId": 31537,
+            "questionSeq": 1,
+            "stuId": 207910
+        }
+
+        self.client.post("/api/homework/student/homework/extraInfo",
+            data=json.dumps(payload),
+            headers=self.user.headers)
+
+    @task
+    def do_save():
+
+        payload = {
+            "homeworkId": 31537,
+            "extraInfos": [
+                {
+                "questionSeq": 1,
+                "questionExtraInfos": [
+                    {
+                    "questionId": "1q02cftohg",
+                    "stuAnswer": [
+                        "C"
+                    ],
+                    "stuAnswerImgUrl": []
+                    }
+                ]
+                }
+            ]
+        }
+
+        self.client.post("/api/homework/student/homework/saveExtraInfo",
+            data=json.dumps(payload),
+            headers=self.user.headers)
+
+#学生提问
+class StuAskQuestion(TaskSet):
+
+    def on_start(self):
+        self.homeworkId = 31547
+        self.questionId = '1q02cftog2'
+        self.topicId = None
+
+    @task
+    def get_topic_base_info(self):
+        with self.client.post(
+            f"/api/qacenter/student/homework/question/topicBasicInfo?homeworkId={self.homeworkId}&questionId={self.questionId}",
+            headers=self.user.headers
+        ) as rst:
+            response_data = rst.json()
+            print(response_data)
+            if response_data["data"]["topicId"]:
+                self.topicId = response_data["data"]["topicId"]
+                payload = {
+                    "pageSize": 30,
+                    "pageNum": 1,
+                    "topicId": self.topicId,
+                    "topicReply": True
+                }
+                self.client.post("/api/qacenter/student/homework/question/replyList", 
+                    data=json.dumps(payload),
+                    headers=self.user.headers
+                )
+    
+    @task
+    def send_quiz(self):
+        if self.topicId:
+            payload = {
+                "resourceId": self.questionId,
+                "paperId": self.homeworkId,
+                "type": "HOMEWORK_HOLIDAY",
+                "courseCode": "PHYSICAL",
+                "content": {
+                    "content": "img test",
+                    "fileInfo": [
+                        {
+                            "url": "https://test-xueceresource.oss-cn-shanghai.aliyuncs.com/qna/3i0wezy/6ca9eb7dfd734b52816f6756fab49ffb1.jpeg",
+                            "name": "雪山2.jpg",
+                            "type": "IMAGE",
+                            "uploadTime": 1749143533871
+                        }
+                    ]
+                },
+                "topicIdList": [self.topicId]
+            }
+
+            content = payload["content"]["content"]
+
+            self.client.get(f"/api/holidayvideo/student/holidayvideo/sensitiveword/check?content={content}",headers=self.user.headers)
+
+            self.client.post('/api/qacenter/student/homework/question/homeworkQuiz',
+                data=json.dumps(payload),
+                headers=self.user.headers    
+            )
+
+            payload2 = {
+                    "pageSize": 30,
+                    "pageNum": 1,
+                    "topicId": self.topicId,
+                    "topicReply": True
+                }
+            self.client.post("/api/qacenter/student/homework/question/replyList",
+                data=json.dumps(payload),
+                headers=self.user.headers
+            )
 
 #学生查看下载资料
 class DownloadBehavior(TaskSet):
@@ -233,7 +320,7 @@ class DoHomeworkFree(TaskSet):
         self.client.get(f"/api/homework/student/homework/get?homeworkId={self.homeworkId}")
 
     @task(0)
-    def do_save(self)
+    def do_save(self):
         payload = {
           "homeworkId": 31111,
           "questionInfos": [
@@ -241,34 +328,34 @@ class DoHomeworkFree(TaskSet):
               "questionSeq": "1",
               "questionType": "MCHOICE",
               "stuAnswer": "",
-              "isNoAsked": true
+              "isNoAsked": True
             },
             {
               "questionSeq": "2",
               "questionType": "MCHOICE",
               "stuAnswer": "",
-              "isNoAsked": true
+              "isNoAsked": True
             },
             {
               "questionSeq": "3",
               "questionType": "MCHOICE",
               "stuAnswer": "",
-              "isNoAsked": true
+              "isNoAsked": True
             },
             {
               "questionSeq": "6",
               "questionType": "SHORTANSWER",
               "stuAnswerImgUrl": "",
-              "isNoAsked": true
+              "isNoAsked": True
             },
             {
               "questionSeq": "7",
               "questionType": "SHORTANSWER",
               "stuAnswerImgUrl": "",
-              "isNoAsked": true
+              "isNoAsked": True
             }
           ],
-          "autoSubmit": true
+          "autoSubmit": True
         }
 
         self.client.post("/api/homework/student/homework/save", data=json.dumps(payload), headers=self.user.headers)
@@ -277,7 +364,7 @@ class DoHomeworkFree(TaskSet):
             "/api/homework/student/holidaytask/homework/list?finished=false&holidayTaskId=758&courseCode=&startDatetime=&endDatetime=&type=1&nameLike=&pageNum=1&pageSize=22",
             headers=self.user.headers)
 
-#学生查看和提交自由出题练习
+#学生查看和提交打卡任务
 class DoScheduleTask(TaskSet):
     def on_start(self):
         self.homeworkId = 30779
@@ -287,11 +374,11 @@ class DoScheduleTask(TaskSet):
         self.client.get(f"/api/homework/student/holidaytask/homework/schedule/get?homeworkId={self.homeworkId}")
 
     @task
-    def get_detail(self)
+    def get_detail(self):
         self.client.get(f"/api/homework/student/holidaytask/special/question/detail/list?homeworkId={self.homeworkId}")
 
     @task(0)
-    def do_save(self)
+    def do_save(self):
         payload = {
           "homeworkId": 30779,
           "stuAnswer": "测试数据测试数据",
@@ -309,8 +396,9 @@ class DoScheduleTask(TaskSet):
 
 
 class EcommerceUser(HttpUser):
-    wait_time = constant(30)
-    tasks = [WatchVideoBehavior] # 将SequentialTaskSet分配给用户
+    # wait_time = constant(30)
+    wait_time = between(1,5)
+    tasks = [StuAskQuestion] # 将SequentialTaskSet分配给用户
     host = "https://xuece-xqdsj-stagingtest1.unisolution.cn"
     
 
@@ -360,18 +448,3 @@ class EcommerceUser(HttpUser):
                 response.failure(f"Status code: {response.status_code}")
 
 
-# 配置启动方法
-# class ConfigurableStudentUser(BaseStudentUser):
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         self.selected_flows = kwargs.get("environment").parsed_options.flows.split(",")
-    
-#     def on_start(self):
-#         self.login()
-    
-#     @task
-#     def execute_selected_flows(self):
-#         if "homepage" in self.selected_flows:
-#             self.execute_task_set(HomePageTasks)
-#         if "holiday_tasks" in self.selected_flows:
-#             self.execute_task_set(HolidayTaskListTasks)
