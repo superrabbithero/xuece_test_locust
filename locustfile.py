@@ -3,6 +3,8 @@ import csv
 import os
 from queue import Queue
 import json
+import time
+
 
 
 class AccountLoader:
@@ -81,7 +83,7 @@ class HolidayTaskListBehavior(TaskSet):
     def on_start(self):
 
         #配置需要压测的目标假期作业id
-        self.holidayTaskId = 758 
+        self.holidayTaskId = 873 
 
     @task
     def open_holiday_task_list(self):
@@ -127,16 +129,20 @@ class HolidayTaskListBehavior(TaskSet):
         self.client.get("/api/usercenter/common/loginuserinfo/myschool", headers=self.user.headers)
 
         params={
-            "finished": false,
+            "finished": False,
             "holidayTaskId": self.holidayTaskId,
+            "courseCode":"",
+            "startDatetime":"",
+            "endDatetime":"",
+            "nameLike":"",
             "type": 1,
             "pageNum":1,
             "pageSize":10
         }
         
-        self.client.get("/api/examcenter/student/exam/querylist_v2?pageNum=1&pageSize=5", headers=self.user.headers,params=params)
-    
-        self.client.get(f"/api/homework/student/holidaytask/listshelvedcourse?holidayTaskId={self.holidayTaskId}", headers=self.user.headers)
+        self.client.get("/api/homework/student/holidaytask/homework/list", headers=self.user.headers,params=params)
+        
+        self.client.get(f"/api/homework/student/holidaytask/listshelvedcourse?holidayTaskId={self.holidayTaskId}", headers=self.user.headers) 
 
 #学生查看题目加视频的打卡任务
 class WatchVideoBehavior(TaskSet):
@@ -144,8 +150,9 @@ class WatchVideoBehavior(TaskSet):
     
     def on_start(self):
         #配置需要压测的目标假期作业id
-        self.homeworkId = 30799 
+        self.homeworkId = 31692 
         self.holidayVideoId = None
+        self.videoId = None
 
     @task
     def open_watch_video_page(self):
@@ -162,54 +169,60 @@ class WatchVideoBehavior(TaskSet):
                 try:
                     response_data = response.json()
                     self.holidayVideoId = response_data["data"]["holidayvideoId"]
+                    self.videoId = response_data["data"]["homeworkVideos"][0]["videoId"]
                     response.success()
                 except (KeyError, json.JSONDecodeError) as e:
                     response.failure(f"解析响应失败: {str(e)}")
             else:
                 response.failure(f"Status code: {response.status_code}")
 
-        self.client.get(f"/api/holidayvideo/student/holidayvideo/feedbackScore?holidayvideoId={self.holidayVideoId}", headers=self.user.headers)    
+        self.client.get(f"/api/holidayvideo/student/holidayvideo/feedbackScore?holidayvideoId={self.holidayVideoId}", headers=self.user.headers)  
+
 
     @task
     def do_feedback(self):
 
+        if self.holidayVideoId == None or self.videoId == None:
+            return
+
         payload = {
             "courseCode": "PHYSICAL",
             "feedback": "",
-            "gradeCode": "S02",
-            "holidayvideoId": 2650,
-            "homeworkId": 31537,
-            "videoId": "20306ccc422971f08f0f5107e0c90102",
+            "gradeCode": self.user.gradeCode,
+            "holidayvideoId": self.holidayVideoId,
+            "homeworkId": self.homeworkId,
+            "videoId": self.videoId,
             "score": 3
         }
 
-        self.client.put("/api/holidayvideo/student/holidayvideo/feedback", data=json.dumps(payload), headers=self.user.headers)
+        with self.client.put("/api/holidayvideo/student/holidayvideo/feedback", data=json.dumps(payload), headers=self.user.headers) as rsp:
+            print(rsp.json())
 
 #学生查看拓展并完成训练（需要完善一下按查询到的未作答的题目进行提交）
 class DoOutdoorTraining(TaskSet):
     def on_start(self):
-        self.homeworkId = 31537
+        self.homeworkId = 31692
     
-    @task
+    @task(1)
     def get_question_list(self):
 
         self.client.get(f"/api/holidayvideo/student/holidayvideo/info?homeworkId={self.homeworkId}", headers=self.user.headers)
 
         payload = {
-            "homeworkId": 31537,
+            "homeworkId": self.homeworkId,
             "questionSeq": 1,
-            "stuId": 207910
+            "stuId": self.user.user_id
         }
 
         self.client.post("/api/homework/student/homework/extraInfo",
             data=json.dumps(payload),
             headers=self.user.headers)
 
-    @task
+    @task(0)
     def do_save():
 
         payload = {
-            "homeworkId": 31537,
+            "homeworkId": self.homeworkId,
             "extraInfos": [
                 {
                 "questionSeq": 1,
@@ -234,47 +247,62 @@ class DoOutdoorTraining(TaskSet):
 class StuAskQuestion(TaskSet):
 
     def on_start(self):
-        self.homeworkId = 31547
-        self.questionId = '1q02cftog2'
+        self.homeworkId = 31687  
+        #题目+视频31692  纯视频31687
+
+        #不配置questionId则是纯视频模式提问 1q161c5j5q
+        self.questionId = None 
+        
+        #PHYSICAL,CHINESE
+        self.courseCode = "CHINESE" #PHYSICAL
         self.topicId = None
+        self.isOpenChat = False
 
     @task
     def get_topic_base_info(self):
+        params = {
+            "homeworkId": self.homeworkId ,
+            "questionId": self.questionId
+        }
+
         with self.client.post(
-            f"/api/qacenter/student/homework/question/topicBasicInfo?homeworkId={self.homeworkId}&questionId={self.questionId}",
+            "/api/qacenter/student/homework/question/topicBasicInfo",
+            params=params,
             headers=self.user.headers
         ) as rst:
-            response_data = rst.json()
-            print(response_data)
-            if response_data["data"]["topicId"]:
-                self.topicId = response_data["data"]["topicId"]
-                payload = {
-                    "pageSize": 30,
-                    "pageNum": 1,
-                    "topicId": self.topicId,
-                    "topicReply": True
-                }
-                self.client.post("/api/qacenter/student/homework/question/replyList", 
-                    data=json.dumps(payload),
-                    headers=self.user.headers
-                )
+            if rst.status_code == 200:
+                response_data = rst.json()
+                self.isOpenChat = True
+                # print(response_data)
+                if response_data["data"]["topicId"]:
+                    self.topicId = response_data["data"]["topicId"]
+                    payload = {
+                        "pageSize": 30,
+                        "pageNum": 1,
+                        "topicId": self.topicId,
+                        "topicReply": True
+                    }
+                    self.client.post("/api/qacenter/student/homework/question/replyList", 
+                        data=json.dumps(payload),
+                        headers=self.user.headers
+                    )
     
     @task
     def send_quiz(self):
-        if self.topicId:
+        if self.isOpenChat:
             payload = {
                 "resourceId": self.questionId,
                 "paperId": self.homeworkId,
                 "type": "HOMEWORK_HOLIDAY",
-                "courseCode": "PHYSICAL",
+                "courseCode": self.courseCode,
                 "content": {
-                    "content": "img test",
+                    "content": "这是测试数据，压测数据，balabala",
                     "fileInfo": [
                         {
                             "url": "https://test-xueceresource.oss-cn-shanghai.aliyuncs.com/qna/3i0wezy/6ca9eb7dfd734b52816f6756fab49ffb1.jpeg",
                             "name": "雪山2.jpg",
                             "type": "IMAGE",
-                            "uploadTime": 1749143533871
+                            "uploadTime": int(time.time() * 1000)
                         }
                     ]
                 },
@@ -304,8 +332,8 @@ class StuAskQuestion(TaskSet):
 #学生查看下载资料
 class DownloadBehavior(TaskSet):
     def on_start(self):
-        self.homeworkId = 30499
-        self.holidaytaskId = 758
+        self.homeworkId = 31687
+        self.holidaytaskId = 873
 
     @task
     def get_file_info(self):
@@ -367,21 +395,22 @@ class DoHomeworkFree(TaskSet):
 #学生查看和提交打卡任务
 class DoScheduleTask(TaskSet):
     def on_start(self):
-        self.homeworkId = 30779
+        self.homeworkId = 31687
 
     @task
     def get_question_list(self):
         self.client.get(f"/api/homework/student/holidaytask/homework/schedule/get?homeworkId={self.homeworkId}")
 
-    @task
+    #个性化打卡任务
+    @task(0)
     def get_detail(self):
         self.client.get(f"/api/homework/student/holidaytask/special/question/detail/list?homeworkId={self.homeworkId}")
 
-    @task(0)
+    @task
     def do_save(self):
         payload = {
-          "homeworkId": 30779,
-          "stuAnswer": "测试数据测试数据",
+          "homeworkId": self.homeworkId,
+          "stuAnswer": "测试打卡任务提交啦啦啦，压力测试，压力测试，压力测试",
           "stuAnswerImgUrl": [
             "https://test-xueceresource.oss-cn-shanghai.aliyuncs.com/homework/student/3i0wezx/7ccf81e729524169ac2ceb4426aa5f2e1.jpeg",
             "https://test-xueceresource.oss-cn-shanghai.aliyuncs.com/homework/student/3i0wezx/b74a285a49134e7386b2599298bd935f1.jpeg",
@@ -392,29 +421,34 @@ class DoScheduleTask(TaskSet):
           ]
         }
 
-        self.client.post("/api/homework/student/holidaytask/homework/schedule/save", data=json.dumps(payload), headers=self.user.headers)
+        with self.client.post("/api/homework/student/holidaytask/homework/schedule/save", data=json.dumps(payload), headers=self.user.headers) as resp:
+            print(resp.json())
 
 
+#用户类
 class EcommerceUser(HttpUser):
     # wait_time = constant(30)
     wait_time = between(1,5)
-    tasks = [StuAskQuestion] # 将SequentialTaskSet分配给用户
+    tasks = [WatchVideoBehavior] # 将Task分配给用户
     host = "https://xuece-xqdsj-stagingtest1.unisolution.cn"
     
 
     def on_start(self):
         # 只在第一次运行时获取账号，后续不再更换
         if not hasattr(self,'account'):
-            print(hasattr(self,'account'))
+            # print(hasattr(self,'account'))
             self.account = account_loader.get_account()
-            self.user_id = id(self)
-            print(f"用户{self.user_id}固定使用账号 {self.account['username']} 登录")
+            self.id = id(self)
+            self.user_id = None
+            print(f"用户{self.id}固定使用账号 {self.account['username']} 登录")
             self.auth_token = None
             self.school_id = None
             self.headers = None
+            self.gradeCode = None
             self._login()
 
     def _login(self):
+
         params = {
             "username":self.account['username'],
             "encryptpwd":'c34dd995a8132605764a9347dae6e8ca', #测试数据统一密码
@@ -422,6 +456,7 @@ class EcommerceUser(HttpUser):
             "clientversion":"1.30.6",
             "systemversion":"chrome136.0.0.0"
         }
+        print(params)
         # self.client.get("/login", params=params)
         with self.client.get("/api/usercenter/nnauth/user/login", params=params, catch_response=True) as response:
             # print(f"响应状态码: {response.status_code}")
@@ -430,7 +465,9 @@ class EcommerceUser(HttpUser):
                 try:
                     response_data = response.json()
                     school_id = response_data["data"]["user"]["schoolId"]
+                    self.user_id = response_data["data"]["user"]["id"]
                     auth_token = response_data["data"]["authtoken"]
+                    self.gradeCode = response_data["data"]["user"]["gradeCode"]
 
                     self.auth_token = auth_token
                     self.school_id = school_id
