@@ -60,7 +60,7 @@ class RedisAccountLoader:
         return json.loads(account_data)
 
 # 初始化Redis账号池（示例路径，按需修改）
-redis_loader = RedisAccountLoader(redis_host='localhost')
+redis_loader = RedisAccountLoader(redis_host='192.168.31.124')
 
 #用户登录首页
 class UserLoginBehavior(TaskSet):
@@ -499,7 +499,7 @@ class EcommerceUser(HttpUser):
             "systemversion":"chrome136.0.0.0"
         }
         # self.client.get("/login", params=params)
-        with self.client.get("/api/usercenter/nnauth/user/login", params=params, catch_response=True) as response:
+        with self.client.get("/api/usercenter/nnauth/user/login",name="用户登录请求", params=params, catch_response=True) as response:
             # print(f"响应状态码: {response.status_code}")
             # print(f"响应内容: {response.text}")
             if response.status_code == 200:
