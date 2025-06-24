@@ -2,6 +2,7 @@ from locust import HttpUser, task, between, TaskSet, constant, SequentialTaskSet
 import csv
 import os
 from queue import Queue
+import redis
 import json
 import time
 
@@ -15,12 +16,51 @@ class AccountLoader:
         with open(file_path, newline='') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
+                # print(row)
                 self.accounts.put(row)
     
     def get_account(self):
         return self.accounts.get()
 
 account_loader = AccountLoader()
+
+# Redis 账号池管理类
+class RedisAccountLoader:
+    def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0):
+
+        self.redis = redis.StrictRedis(
+            host=redis_host,
+            port=redis_port,
+            db=redis_db,
+            decode_responses=True
+        )
+
+        self.pool_key = "locust:account_pool"
+
+        self.init_accounts()
+        
+    def init_accounts(self):
+        """初始化时将账号导入Redis（每次调用前先清空现有数据）"""
+        # 先删除现有的账号池数据
+        self.redis.delete(self.pool_key)
+
+        """初始化时将账号导入Redis（只需运行一次）"""
+        file_path = os.path.join(os.path.dirname(__file__), "data/accounts.csv")
+        with open(file_path, newline='') as csvfile:
+            reader = csv.DictReader(csvfile)
+
+            for row in reader:
+                self.redis.rpush(self.pool_key, json.dumps(row))
+    
+    def get_account(self):
+        """原子化获取账号（LPOP操作是原子的）"""
+        account_data = self.redis.lpop(self.pool_key)
+        if not account_data:
+            raise Exception("No accounts available in Redis pool!")
+        return json.loads(account_data)
+
+# 初始化Redis账号池（示例路径，按需修改）
+redis_loader = RedisAccountLoader(redis_host='localhost')
 
 #用户登录首页
 class UserLoginBehavior(TaskSet):
@@ -195,8 +235,7 @@ class WatchVideoBehavior(TaskSet):
             "score": 3
         }
 
-        with self.client.put("/api/holidayvideo/student/holidayvideo/feedback", data=json.dumps(payload), headers=self.user.headers) as rsp:
-            print(rsp.json())
+        self.client.put("/api/holidayvideo/student/holidayvideo/feedback", data=json.dumps(payload), headers=self.user.headers)
 
 #学生查看拓展并完成训练（需要完善一下按查询到的未作答的题目进行提交）
 class DoOutdoorTraining(TaskSet):
@@ -437,7 +476,10 @@ class EcommerceUser(HttpUser):
         # 只在第一次运行时获取账号，后续不再更换
         if not hasattr(self,'account'):
             # print(hasattr(self,'account'))
-            self.account = account_loader.get_account()
+            # 使用本地数据
+            # self.account = account_loader.get_account()
+            # 开启redis使用分布式
+            self.account = redis_loader.get_account()
             self.id = id(self)
             self.user_id = None
             print(f"用户{self.id}固定使用账号 {self.account['username']} 登录")
@@ -456,7 +498,6 @@ class EcommerceUser(HttpUser):
             "clientversion":"1.30.6",
             "systemversion":"chrome136.0.0.0"
         }
-        print(params)
         # self.client.get("/login", params=params)
         with self.client.get("/api/usercenter/nnauth/user/login", params=params, catch_response=True) as response:
             # print(f"响应状态码: {response.status_code}")
