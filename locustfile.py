@@ -59,8 +59,8 @@ class RedisAccountLoader:
             raise Exception("No accounts available in Redis pool!")
         return json.loads(account_data)
 
-# 初始化Redis账号池（示例路径，按需修改）
-redis_loader = RedisAccountLoader(redis_host='192.168.31.124')
+# 初始化Redis账号池
+# redis_loader = RedisAccountLoader(redis_host='192.168.31.124')
 
 #用户登录首页
 class UserLoginBehavior(TaskSet):
@@ -466,10 +466,13 @@ class DoScheduleTask(TaskSet):
 
 #用户类
 class EcommerceUser(HttpUser):
-    # wait_time = constant(30)
-    wait_time = between(1,5)
+    wait_time = constant(300)
+    # wait_time = between(1,5)
     tasks = [WatchVideoBehavior] # 将Task分配给用户
-    host = "https://xuece-xqdsj-stagingtest1.unisolution.cn"
+    # host = "https://xuece-xqdsj-stagingtest1.unisolution.cn"
+    # host = "https://xuece-xqdsj-stress.unisolution.cn"
+    host = "https://47.117.16.192"
+    # host = "http://8.159.129.28"
     
 
     def on_start(self):
@@ -477,9 +480,9 @@ class EcommerceUser(HttpUser):
         if not hasattr(self,'account'):
             # print(hasattr(self,'account'))
             # 使用本地数据
-            # self.account = account_loader.get_account()
+            self.account = account_loader.get_account()
             # 开启redis使用分布式
-            self.account = redis_loader.get_account()
+            # self.account = redis_loader.get_account()
             self.id = id(self)
             self.user_id = None
             print(f"用户{self.id}固定使用账号 {self.account['username']} 登录")
@@ -496,12 +499,14 @@ class EcommerceUser(HttpUser):
             "encryptpwd":'c34dd995a8132605764a9347dae6e8ca', #测试数据统一密码
             "clienttype":"BROWSER",
             "clientversion":"1.30.6",
-            "systemversion":"chrome136.0.0.0"
+            "systemversion":"chrome137.0.0.0"
         }
+
+        headers = {"User-Agent": "Mozilla/5.0"}
         # self.client.get("/login", params=params)
-        with self.client.get("/api/usercenter/nnauth/user/login",name="用户登录请求", params=params, catch_response=True) as response:
-            # print(f"响应状态码: {response.status_code}")
-            # print(f"响应内容: {response.text}")
+        with self.client.get("/api/usercenter/nnauth/user/login?username=locustTestStu1:xctest&encryptpwd=c34dd995a8132605764a9347dae6e8ca&clienttype=BROWSER&clientversion=1.30.6&systemversion=chrome137.0.0.0",headers=headers, catch_response=True) as response:
+            print(f"响应状态码: {response.status_code}")
+            print(f"响应内容: {response}")
             if response.status_code == 200:
                 try:
                     response_data = response.json()
