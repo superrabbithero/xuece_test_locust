@@ -1,21 +1,35 @@
-from locust import HttpUser, task, between, TaskSet, constant, SequentialTaskSet
+from locust import FastHttpUser, task, between, TaskSet, constant, SequentialTaskSet
 import csv
 import os
 from queue import Queue
 import redis
 import json
 import time
+from redis.exceptions import WatchError
 
 
 
 class AccountLoader:
     def __init__(self):
+        self.worker_id = int(os.getenv("LOCUST_WORKER_NUM", "0"))
         self.accounts = Queue()
-        file_path = os.path.join(os.path.dirname(__file__), "data/accounts.csv")
+        file_path = os.path.join(os.path.dirname(__file__), "data/accounts_3000.csv")
         
+        self.total_workers = 3
+
         with open(file_path, newline='') as csvfile:
             reader = csv.DictReader(csvfile)
-            for row in reader:
+            all_rows = list(reader)  # 读取所有行
+            # 计算每个worker分配的起始和结束位置
+            total_accounts = len(all_rows)
+            print(total_accounts)
+            chunk_size = 3000 // self.total_workers
+            start = self.worker_id * chunk_size
+            end = (self.worker_id + 1) * chunk_size if self.worker_id != self.total_workers - 1 else total_accounts
+
+            print(start,end)
+
+            for row in all_rows[start:end]:
                 # print(row)
                 self.accounts.put(row)
     
@@ -25,42 +39,63 @@ class AccountLoader:
 account_loader = AccountLoader()
 
 # Redis 账号池管理类
-class RedisAccountLoader:
-    def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0):
+# class RedisAccountLoader:
+#     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0):
 
-        self.redis = redis.StrictRedis(
-            host=redis_host,
-            port=redis_port,
-            db=redis_db,
-            decode_responses=True
-        )
+#         self.redis = redis.StrictRedis(
+#             host=redis_host,
+#             port=redis_port,
+#             db=redis_db,
+#             decode_responses=True
+#         )
 
-        self.pool_key = "locust:account_pool"
+#         self.pool_key = "locust:account_pool"
 
-        self.init_accounts()
+#         self.init_accounts()
         
-    def init_accounts(self):
-        """初始化时将账号导入Redis（每次调用前先清空现有数据）"""
-        # 先删除现有的账号池数据
-        self.redis.delete(self.pool_key)
+#     def init_accounts(self):
+#         """初始化时将账号导入Redis（每次调用前先清空现有数据）"""
+#         # 先删除现有的账号池数据
+#         self.redis.delete(self.pool_key)
 
-        """初始化时将账号导入Redis（只需运行一次）"""
-        file_path = os.path.join(os.path.dirname(__file__), "data/accounts.csv")
-        with open(file_path, newline='') as csvfile:
-            reader = csv.DictReader(csvfile)
+#         """初始化时将账号导入Redis（只需运行一次）"""
+#         file_path = os.path.join(os.path.dirname(__file__), "data/accounts_3000.csv")
+#         with open(file_path, newline='') as csvfile:
+#             reader = csv.DictReader(csvfile)
 
-            for row in reader:
-                self.redis.rpush(self.pool_key, json.dumps(row))
+#             for row in reader:
+#                 self.redis.rpush(self.pool_key, json.dumps(row))
     
-    def get_account(self):
-        """原子化获取账号（LPOP操作是原子的）"""
-        account_data = self.redis.lpop(self.pool_key)
-        if not account_data:
-            raise Exception("No accounts available in Redis pool!")
-        return json.loads(account_data)
+#     # def get_account(self):
+#     #     """原子化获取账号（LPOP操作是原子的）"""
+#     #     account_data = self.redis.lpop(self.pool_key)
+#     #     if not account_data:
+#     #         raise Exception("No accounts available in Redis pool!")
+#     #     return json.loads(account_data)
 
-# 初始化Redis账号池
-# redis_loader = RedisAccountLoader(redis_host='192.168.31.124')
+#     def get_account(self):
+#         """使用 Redis 事务确保原子性获取账号"""
+#         with self.redis.pipeline() as pipe:
+#             while True:
+#                 try:
+#                     # 开启监视
+#                     pipe.watch(self.pool_key)
+#                     # 检查列表是否为空
+#                     if not pipe.llen(self.pool_key):
+#                         raise Exception("No accounts available in Redis pool!")
+#                     # 开始事务
+#                     pipe.multi()
+#                     pipe.lpop(self.pool_key)
+#                     result = pipe.execute()[0]
+#                     return json.loads(result)
+#                 except WatchError:
+#                     # 如果其他客户端修改了数据，重试
+#                     continue
+#                 finally:
+#                     pipe.reset()
+
+# # 初始化Redis账号池
+# redis_loader = RedisAccountLoader(redis_host='192.168.0.119')
 
 #用户登录首页
 class UserLoginBehavior(TaskSet):
@@ -123,7 +158,7 @@ class HolidayTaskListBehavior(TaskSet):
     def on_start(self):
 
         #配置需要压测的目标假期作业id
-        self.holidayTaskId = 873 
+        self.holidayTaskId = self.user.holidaytaskId 
 
     @task
     def open_holiday_task_list(self):
@@ -190,7 +225,7 @@ class WatchVideoBehavior(TaskSet):
     
     def on_start(self):
         #配置需要压测的目标假期作业id
-        self.homeworkId = 31692 
+        self.homeworkId = self.user.homeworkId 
         self.holidayVideoId = None
         self.videoId = None
 
@@ -205,13 +240,15 @@ class WatchVideoBehavior(TaskSet):
             catch_response=True) as response:
             # print(f"响应状态码: {response.status_code}")
             # print(f"响应内容: {response.text}")
+
+
             if response.status_code == 200:
                 try:
                     response_data = response.json()
                     self.holidayVideoId = response_data["data"]["holidayvideoId"]
                     self.videoId = response_data["data"]["homeworkVideos"][0]["videoId"]
                     response.success()
-                except (KeyError, json.JSONDecodeError) as e:
+                except Exception as e:
                     response.failure(f"解析响应失败: {str(e)}")
             else:
                 response.failure(f"Status code: {response.status_code}")
@@ -240,7 +277,7 @@ class WatchVideoBehavior(TaskSet):
 #学生查看拓展并完成训练（需要完善一下按查询到的未作答的题目进行提交）
 class DoOutdoorTraining(TaskSet):
     def on_start(self):
-        self.homeworkId = 31692
+        self.homeworkId = self.user.homeworkId
     
     @task(1)
     def get_question_list(self):
@@ -286,7 +323,7 @@ class DoOutdoorTraining(TaskSet):
 class StuAskQuestion(TaskSet):
 
     def on_start(self):
-        self.homeworkId = 31687  
+        self.homeworkId = self.user.homeworkId  
         #题目+视频31692  纯视频31687
 
         #不配置questionId则是纯视频模式提问 1q161c5j5q
@@ -307,24 +344,42 @@ class StuAskQuestion(TaskSet):
         with self.client.post(
             "/api/qacenter/student/homework/question/topicBasicInfo",
             params=params,
-            headers=self.user.headers
+            headers=self.user.headers,
+            catch_response=True
         ) as rst:
+            # print(self.user.account['username'])
+            # if self.user.account['username'] == "locustTestStu3000":
+            #     print(rst.status_code)
+            # print(rst.status_code)
             if rst.status_code == 200:
-                response_data = rst.json()
-                self.isOpenChat = True
-                # print(response_data)
-                if response_data["data"]["topicId"]:
-                    self.topicId = response_data["data"]["topicId"]
-                    payload = {
-                        "pageSize": 30,
-                        "pageNum": 1,
-                        "topicId": self.topicId,
-                        "topicReply": True
-                    }
-                    self.client.post("/api/qacenter/student/homework/question/replyList", 
-                        data=json.dumps(payload),
-                        headers=self.user.headers
-                    )
+                try:
+                    response_data = rst.json()
+
+                    if response_data["data"]["topicId"]:
+                        self.topicId = response_data["data"]["topicId"]
+                        payload = {
+                            "pageSize": 30,
+                            "pageNum": 1,
+                            "topicId": self.topicId,
+                            "topicReply": True
+                        }
+
+                        with self.client.post("/api/qacenter/student/homework/question/replyList", 
+                            data=json.dumps(payload),
+                            headers=self.user.headers,
+                            catch_response=True
+                        )as rsp:
+                            r = rsp.json()
+                            if r.get("code") == "SUCCESS":
+                                rsp.success()
+                            else:
+                                rsp.failure("请求失败")
+                                print("1+++++++++++++++++++++++++",r)
+
+                        self.isOpenChat = True
+
+                except Exception as e:
+                    rst.failure(f"解析响应失败: {str(e)}")
     
     @task
     def send_quiz(self):
@@ -350,12 +405,23 @@ class StuAskQuestion(TaskSet):
 
             content = payload["content"]["content"]
 
-            self.client.get(f"/api/holidayvideo/student/holidayvideo/sensitiveword/check?content={content}",headers=self.user.headers)
+            # params
 
-            self.client.post('/api/qacenter/student/homework/question/homeworkQuiz',
+            # with self.client.get(f"/api/holidayvideo/student/holidayvideo/sensitiveword/check?content={content}",headers=self.user.headers)as rsp:                    
+            #     print(rsp)
+
+            with self.client.post('/api/qacenter/student/homework/question/homeworkQuiz',
                 data=json.dumps(payload),
-                headers=self.user.headers    
-            )
+                headers=self.user.headers,
+                catch_response=True    
+            )as rsp:
+                r = rsp.json()
+                if r.get("code") == "SUCCESS":
+                    rsp.success()
+                else:
+                    rsp.failure("请求失败")
+                    print("2+++++++++++++++++++++++++",r)
+
 
             payload2 = {
                     "pageSize": 30,
@@ -363,33 +429,41 @@ class StuAskQuestion(TaskSet):
                     "topicId": self.topicId,
                     "topicReply": True
                 }
-            self.client.post("/api/qacenter/student/homework/question/replyList",
-                data=json.dumps(payload),
-                headers=self.user.headers
-            )
+            with self.client.post("/api/qacenter/student/homework/question/replyList",
+                data=json.dumps(payload2),
+                headers=self.user.headers,
+                catch_response=True
+            )as rsp:
+                r = rsp.json()
+                if r.get("code") == "SUCCESS":
+                    rsp.success()
+                else:
+                    rsp.failure("请求失败")
+                    print("3+++++++++++++++++++++++++",r,self.user.account['username'])
+
 
 #学生查看下载资料
 class DownloadBehavior(TaskSet):
     def on_start(self):
-        self.homeworkId = 31687
-        self.holidaytaskId = 873
+        self.homeworkId = self.user.homeworkId
+        self.holidaytaskId = self.user.holidaytaskId
 
     @task
     def get_file_info(self):
-        self.client.get(f"/api/homework/student/holidaytask/homework/resource/get?homeworkId={self.homeworkId}&holidaytaskid={self.holidaytaskId}")
+        self.client.get(f"/api/homework/student/holidaytask/homework/resource/get?homeworkId={self.homeworkId}&holidaytaskid={self.holidaytaskId}",headers=self.user.headers)
 
 #学生查看和提交自由出题练习
 class DoHomeworkFree(TaskSet):
     def on_start(self):
-        self.homeworkId = 758
+        self.holidaytaskId = self.user.holidaytaskId
     @task
     def get_question_list(self):
-        self.client.get(f"/api/homework/student/homework/get?homeworkId={self.homeworkId}")
+        self.client.get(f"/api/homework/student/homework/get?homeworkId={self.holidaytaskId}")
 
     @task(0)
     def do_save(self):
         payload = {
-          "homeworkId": 31111,
+          "homeworkId": self.user.homeworkId,
           "questionInfos": [
             {
               "questionSeq": "1",
@@ -434,16 +508,16 @@ class DoHomeworkFree(TaskSet):
 #学生查看和提交打卡任务
 class DoScheduleTask(TaskSet):
     def on_start(self):
-        self.homeworkId = 31687
+        self.homeworkId = self.user.homeworkId
 
     @task
     def get_question_list(self):
-        self.client.get(f"/api/homework/student/holidaytask/homework/schedule/get?homeworkId={self.homeworkId}")
+        self.client.get(f"/api/homework/student/holidaytask/homework/schedule/get?homeworkId={self.homeworkId}",headers=self.user.headers)
 
     #个性化打卡任务
     @task(0)
     def get_detail(self):
-        self.client.get(f"/api/homework/student/holidaytask/special/question/detail/list?homeworkId={self.homeworkId}")
+        self.client.get(f"/api/homework/student/holidaytask/special/question/detail/list?homeworkId={self.homeworkId}",headers=self.user.headers)
 
     @task
     def do_save(self):
@@ -464,14 +538,52 @@ class DoScheduleTask(TaskSet):
             print(resp.json())
 
 
+#教师查看练习监控
+class tchMarkingList(TaskSet):
+    def on_start(self):
+        self.homeworkId = self.user.homeworkId
+
+    @task
+    def get_Marking_list(self):
+        params = {
+            'holidaytaskId' : self.user.holidayTaskId,
+            'holidayTaskType' : '1',
+            'pageNum': '1',
+            'pageSize':'5'
+
+        }
+
+        self.client.get(f"/api/homework/teacher/homework/marking/list", params=params,headers=self.user.headers)
+
+
+    @task
+    def get_checkList(self):
+        params = {
+            'holidayTaskId' : self.user.holidayTaskId,
+            'homeworkId': self.user.homeworkId
+
+        }
+        self.client.get(f"/api/homework/teacher/homework/monitoring/checkRequireSyncStudents",params=params,headers=self.user.headers)
+
+        self.client.get(f"/api/homework/teacher/homework/monitoring/info?homeworkId={self.user.homeworkId}",headers=self.user.headers)
+
+        self.client.get(f"/api/homework/teacher/homework/monitoring/status/overview?homeworkId={self.user.homeworkId}",headers=self.user.headers)
+
+        self.client.get(f"/api/homework/teacher/homework/detail?id={self.user.homeworkId}",headers=self.user.headers)
+
+        self.client.get(f"/api/homework/teacher/homework/monitoring/class_info?homeworkId={self.user.homeworkId}",headers=self.user.headers)
+
+        self.client.get(f"/api/holidayvideo/teacher/holidayvideo/monitor/video?videoType=VOD&homeworkId={self.user.homeworkId}",headers=self.user.headers)
+
+
 #用户类
-class EcommerceUser(HttpUser):
-    wait_time = constant(300)
-    # wait_time = between(1,5)
-    tasks = [WatchVideoBehavior] # 将Task分配给用户
+class EcommerceUser(FastHttpUser):
+    # wait_time = constant(5)
+    wait_time = None
+    tasks = [] # 将Task分配给用户
     # host = "https://xuece-xqdsj-stagingtest1.unisolution.cn"
-    # host = "https://xuece-xqdsj-stress.unisolution.cn"
-    host = "https://47.117.16.192"
+    host = "http://xuece-xqdsj-stress.unisolution.cn"
+    # host = "https://47.117.16.192"
     # host = "http://8.159.129.28"
     
 
@@ -482,7 +594,14 @@ class EcommerceUser(HttpUser):
             # 使用本地数据
             self.account = account_loader.get_account()
             # 开启redis使用分布式
+                
             # self.account = redis_loader.get_account()
+            if self.account['account_type'] == 'stu':
+                self.tasks = [StuAskQuestion]
+                self.wait_time = lambda: between(0,0.1)(self)
+            else:
+                self.tasks = [tchMarkingList]
+                self.wait_time = lambda: between(1,5)(self)
             self.id = id(self)
             self.user_id = None
             print(f"用户{self.id}固定使用账号 {self.account['username']} 登录")
@@ -490,6 +609,9 @@ class EcommerceUser(HttpUser):
             self.school_id = None
             self.headers = None
             self.gradeCode = None
+            print(self.account)
+            self.holidayTaskId = self.account['holidayTaskId']
+            self.homeworkId = self.account['homeworkId']
             self._login()
 
     def _login(self):
@@ -502,31 +624,32 @@ class EcommerceUser(HttpUser):
             "systemversion":"chrome137.0.0.0"
         }
 
-        headers = {"User-Agent": "Mozilla/5.0"}
-        # self.client.get("/login", params=params)
-        with self.client.get("/api/usercenter/nnauth/user/login?username=locustTestStu1:xctest&encryptpwd=c34dd995a8132605764a9347dae6e8ca&clienttype=BROWSER&clientversion=1.30.6&systemversion=chrome137.0.0.0",headers=headers, catch_response=True) as response:
+        with self.client.get("/api/usercenter/nnauth/user/login",name="用户登录", params=params, catch_response=True) as response:
             print(f"响应状态码: {response.status_code}")
             print(f"响应内容: {response}")
+            # if self.account['username'] == "locustTestStu3000":
+            #     print(response.status_code)
             if response.status_code == 200:
-                try:
-                    response_data = response.json()
-                    school_id = response_data["data"]["user"]["schoolId"]
-                    self.user_id = response_data["data"]["user"]["id"]
-                    auth_token = response_data["data"]["authtoken"]
-                    self.gradeCode = response_data["data"]["user"]["gradeCode"]
+                # try:
+                response_data = response.json()
+                print(response_data)
+                school_id = response_data["data"]["user"]["schoolId"]
+                self.user_id = response_data["data"]["user"]["id"]
+                auth_token = response_data["data"]["authtoken"]
+                self.gradeCode = response_data["data"]["user"]["gradeCode"]
 
-                    self.auth_token = auth_token
-                    self.school_id = school_id
+                self.auth_token = auth_token
+                self.school_id = school_id
 
-                    self.headers = {
-                        "Authtoken":self.auth_token,
-                        "xc-app-user-schoolid":f"{self.school_id}",
-                        "Content-Type": "application/json"
-                    }
+                self.headers = {
+                    "Authtoken":self.auth_token,
+                    "xc-app-user-schoolid":f"{self.school_id}",
+                    "Content-Type": "application/json"
+                }
 
-                    response.success()
-                except (KeyError, json.JSONDecodeError) as e:
-                    response.failure(f"解析响应失败: {str(e)}")
+                #     response.success()
+                # except (KeyError, json.JSONDecodeError) as e:
+                #     response.failure(f"解析响应失败: {str(e)}")
             else:
                 response.failure(f"Status code: {response.status_code}")
 
