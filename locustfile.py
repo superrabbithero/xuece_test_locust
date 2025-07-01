@@ -8,10 +8,11 @@ import time
 from redis.exceptions import WatchError
 
 
-
+# 本地分配账号
 class AccountLoader:
     def __init__(self):
-        self.worker_id = int(os.getenv("LOCUST_WORKER_NUM", "0"))
+        start = int(os.getenv("LOCUST_START", "0"))
+        end = int(os.getenv("LOCUST_END", "0"))
         self.accounts = Queue()
         file_path = os.path.join(os.path.dirname(__file__), "data/accounts_3000.csv")
         
@@ -22,10 +23,8 @@ class AccountLoader:
             all_rows = list(reader)  # 读取所有行
             # 计算每个worker分配的起始和结束位置
             total_accounts = len(all_rows)
-            print(total_accounts)
-            chunk_size = 3000 // self.total_workers
-            start = self.worker_id * chunk_size
-            end = (self.worker_id + 1) * chunk_size if self.worker_id != self.total_workers - 1 else total_accounts
+            
+            end = min(total_accounts, end)
 
             print(start,end)
 
@@ -130,7 +129,7 @@ class UserLoginBehavior(TaskSet):
                 except Exception as e:
                     response.failure(f"处理响应时出错: {str(e)}")
             else:
-                response.failure(f"HTTP错误: {response.status_code}")
+                response.failure(f"HTTP错误: {response.status_code}",self.user.account["username"])
 
         params={
             "schoolId": f"{self.user.school_id}",
@@ -341,6 +340,8 @@ class StuAskQuestion(TaskSet):
             "questionId": self.questionId
         }
 
+        print(params)
+
         with self.client.post(
             "/api/qacenter/student/homework/question/topicBasicInfo",
             params=params,
@@ -380,6 +381,7 @@ class StuAskQuestion(TaskSet):
 
                 except Exception as e:
                     rst.failure(f"解析响应失败: {str(e)}")
+                    print(f"解析响应失败: {str(e)}")
     
     @task
     def send_quiz(self):
@@ -625,31 +627,30 @@ class EcommerceUser(FastHttpUser):
         }
 
         with self.client.get("/api/usercenter/nnauth/user/login",name="用户登录", params=params, catch_response=True) as response:
-            print(f"响应状态码: {response.status_code}")
-            print(f"响应内容: {response}")
-            # if self.account['username'] == "locustTestStu3000":
-            #     print(response.status_code)
+            # print(f"响应状态码: {response.status_code}")
+            # print(f"响应内容: {response}")
+            
             if response.status_code == 200:
-                # try:
-                response_data = response.json()
-                print(response_data)
-                school_id = response_data["data"]["user"]["schoolId"]
-                self.user_id = response_data["data"]["user"]["id"]
-                auth_token = response_data["data"]["authtoken"]
-                self.gradeCode = response_data["data"]["user"]["gradeCode"]
+                try:
+                    response_data = response.json()
+                    print(response_data)
+                    school_id = response_data["data"]["user"]["schoolId"]
+                    self.user_id = response_data["data"]["user"]["id"]
+                    auth_token = response_data["data"]["authtoken"]
+                    self.gradeCode = response_data["data"]["user"]["gradeCode"]
 
-                self.auth_token = auth_token
-                self.school_id = school_id
+                    self.auth_token = auth_token
+                    self.school_id = school_id
 
-                self.headers = {
-                    "Authtoken":self.auth_token,
-                    "xc-app-user-schoolid":f"{self.school_id}",
-                    "Content-Type": "application/json"
-                }
+                    self.headers = {
+                        "Authtoken":self.auth_token,
+                        "xc-app-user-schoolid":f"{self.school_id}",
+                        "Content-Type": "application/json"
+                    }
 
-                #     response.success()
-                # except (KeyError, json.JSONDecodeError) as e:
-                #     response.failure(f"解析响应失败: {str(e)}")
+                    response.success()
+                except (KeyError, json.JSONDecodeError) as e:
+                    response.failure(f"解析响应失败: {str(e)}")
             else:
                 response.failure(f"Status code: {response.status_code}")
 
