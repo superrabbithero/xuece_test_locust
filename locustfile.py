@@ -255,7 +255,7 @@ class WatchVideoBehavior(TaskSet):
         self.client.get(f"/api/holidayvideo/student/holidayvideo/feedbackScore?holidayvideoId={self.holidayVideoId}", headers=self.user.headers)  
 
 
-    @task
+    @task(0)
     def do_feedback(self):
 
         if self.holidayVideoId == None or self.videoId == None:
@@ -329,63 +329,77 @@ class StuAskQuestion(TaskSet):
         self.questionId = None 
         
         #PHYSICAL,CHINESE
-        self.courseCode = "CHINESE" #PHYSICAL
+        self.courseCode = "PHYSICAL" #PHYSICAL
         self.topicId = None
-        self.isOpenChat = False
 
-    @task
+    @task(1)
     def get_topic_base_info(self):
         params = {
             "homeworkId": self.homeworkId ,
             "questionId": self.questionId
         }
 
-        print(params)
+        # print(params)
 
         with self.client.post(
             "/api/qacenter/student/homework/question/topicBasicInfo",
+            name="/api/qacenter/student/homework/question/topicBasicInfo",
             params=params,
-            headers=self.user.headers,
-            catch_response=True
+            headers=self.user.headers
         ) as rst:
             # print(self.user.account['username'])
             # if self.user.account['username'] == "locustTestStu3000":
             #     print(rst.status_code)
             # print(rst.status_code)
             if rst.status_code == 200:
-                try:
-                    response_data = rst.json()
+                response_data = rst.json()
 
-                    if response_data["data"]["topicId"]:
-                        self.topicId = response_data["data"]["topicId"]
-                        payload = {
-                            "pageSize": 30,
-                            "pageNum": 1,
-                            "topicId": self.topicId,
-                            "topicReply": True
-                        }
+                if response_data["data"]["topicId"]:
+                    self.topicId = response_data["data"]["topicId"]
+                    payload = {
+                        "pageSize": 30,
+                        "pageNum": 1,
+                        "topicId": self.topicId,
+                        "topicReply": True
+                    }
 
-                        with self.client.post("/api/qacenter/student/homework/question/replyList", 
-                            data=json.dumps(payload),
-                            headers=self.user.headers,
-                            catch_response=True
-                        )as rsp:
-                            r = rsp.json()
-                            if r.get("code") == "SUCCESS":
-                                rsp.success()
-                            else:
-                                rsp.failure("请求失败")
-                                print("1+++++++++++++++++++++++++",r)
+                    self.client.post("/api/qacenter/student/homework/question/replyList", 
+                        data=json.dumps(payload),
+                        headers=self.user.headers,
+                        catch_response=True
+                    )
 
-                        self.isOpenChat = True
+                else:
 
-                except Exception as e:
-                    rst.failure(f"解析响应失败: {str(e)}")
-                    print(f"解析响应失败: {str(e)}")
+                    payload = {
+                        "resourceId": self.questionId,
+                        "paperId": self.homeworkId,
+                        "type": "HOMEWORK_HOLIDAY",
+                        "courseCode": self.courseCode,
+                        "content": {
+                            "content": "这是测试数据，压测数据，balabala",
+                            "fileInfo": [
+                                {
+                                    "url": "https://test-xueceresource.oss-cn-shanghai.aliyuncs.com/qna/3i0wezy/6ca9eb7dfd734b52816f6756fab49ffb1.jpeg",
+                                    "name": "雪山2.jpg",
+                                    "type": "IMAGE",
+                                    "uploadTime": int(time.time() * 1000)
+                                }
+                            ]
+                        },
+                        "topicIdList": None
+                    }
+
+                    self.client.post('/api/qacenter/student/homework/question/homeworkQuiz',
+                        data=json.dumps(payload),
+                        headers=self.user.headers   
+                    )
+
+
     
-    @task
+    @task(3)
     def send_quiz(self):
-        if self.isOpenChat:
+        if self.topicId:
             payload = {
                 "resourceId": self.questionId,
                 "paperId": self.homeworkId,
@@ -412,18 +426,10 @@ class StuAskQuestion(TaskSet):
             # with self.client.get(f"/api/holidayvideo/student/holidayvideo/sensitiveword/check?content={content}",headers=self.user.headers)as rsp:                    
             #     print(rsp)
 
-            with self.client.post('/api/qacenter/student/homework/question/homeworkQuiz',
+            self.client.post('/api/qacenter/student/homework/question/homeworkQuiz',
                 data=json.dumps(payload),
-                headers=self.user.headers,
-                catch_response=True    
-            )as rsp:
-                r = rsp.json()
-                if r.get("code") == "SUCCESS":
-                    rsp.success()
-                else:
-                    rsp.failure("请求失败")
-                    print("2+++++++++++++++++++++++++",r)
-
+                headers=self.user.headers   
+            )
 
             payload2 = {
                     "pageSize": 30,
@@ -431,28 +437,23 @@ class StuAskQuestion(TaskSet):
                     "topicId": self.topicId,
                     "topicReply": True
                 }
-            with self.client.post("/api/qacenter/student/homework/question/replyList",
+
+            self.client.post("/api/qacenter/student/homework/question/replyList",
                 data=json.dumps(payload2),
-                headers=self.user.headers,
-                catch_response=True
-            )as rsp:
-                r = rsp.json()
-                if r.get("code") == "SUCCESS":
-                    rsp.success()
-                else:
-                    rsp.failure("请求失败")
-                    print("3+++++++++++++++++++++++++",r,self.user.account['username'])
+                headers=self.user.headers
+            )
 
 
 #学生查看下载资料
 class DownloadBehavior(TaskSet):
     def on_start(self):
         self.homeworkId = self.user.homeworkId
-        self.holidaytaskId = self.user.holidaytaskId
+        self.holidaytaskId = self.user.holidayTaskId
 
     @task
     def get_file_info(self):
         self.client.get(f"/api/homework/student/holidaytask/homework/resource/get?homeworkId={self.homeworkId}&holidaytaskid={self.holidaytaskId}",headers=self.user.headers)
+                # print(resp.json())
 
 #学生查看和提交自由出题练习
 class DoHomeworkFree(TaskSet):
@@ -581,7 +582,7 @@ class tchMarkingList(TaskSet):
 #用户类
 class EcommerceUser(FastHttpUser):
     # wait_time = constant(5)
-    wait_time = None
+    wait_time = between(0,0.1)
     tasks = [] # 将Task分配给用户
     # host = "https://xuece-xqdsj-stagingtest1.unisolution.cn"
     host = "http://xuece-xqdsj-stress.unisolution.cn"
@@ -600,10 +601,10 @@ class EcommerceUser(FastHttpUser):
             # self.account = redis_loader.get_account()
             if self.account['account_type'] == 'stu':
                 self.tasks = [StuAskQuestion]
-                self.wait_time = lambda: between(0,0.1)(self)
+                # self.wait_time = lambda: between(0,0.01)(self)
             else:
                 self.tasks = [tchMarkingList]
-                self.wait_time = lambda: between(1,5)(self)
+                # self.wait_time = lambda: between(1,5)(self)
             self.id = id(self)
             self.user_id = None
             print(f"用户{self.id}固定使用账号 {self.account['username']} 登录")
@@ -611,7 +612,7 @@ class EcommerceUser(FastHttpUser):
             self.school_id = None
             self.headers = None
             self.gradeCode = None
-            print(self.account)
+            # print(self.account)
             self.holidayTaskId = self.account['holidayTaskId']
             self.homeworkId = self.account['homeworkId']
             self._login()
@@ -626,18 +627,18 @@ class EcommerceUser(FastHttpUser):
             "systemversion":"chrome137.0.0.0"
         }
 
-        with self.client.get("/api/usercenter/nnauth/user/login",name="用户登录", params=params, catch_response=True) as response:
+        with self.client.get("/api/usercenter/nnauth/user/login",name="用户登录", params=params) as response:
             # print(f"响应状态码: {response.status_code}")
             # print(f"响应内容: {response}")
             
             if response.status_code == 200:
-                try:
-                    response_data = response.json()
-                    print(response_data)
-                    school_id = response_data["data"]["user"]["schoolId"]
-                    self.user_id = response_data["data"]["user"]["id"]
+                response_data = response.json()
+                # print(response_data)
+                school_id = response_data["data"]["user"]["schoolId"]
+                self.user_id = response_data["data"]["user"]["id"]
+                if self.user_id:
                     auth_token = response_data["data"]["authtoken"]
-                    self.gradeCode = response_data["data"]["user"]["gradeCode"]
+                    self.gradeCode = response_data["data"]["user"].get("gradeCode",None)
 
                     self.auth_token = auth_token
                     self.school_id = school_id
@@ -647,11 +648,8 @@ class EcommerceUser(FastHttpUser):
                         "xc-app-user-schoolid":f"{self.school_id}",
                         "Content-Type": "application/json"
                     }
+                else:
+                    print("存在登录失败",self.account['username'])
 
-                    response.success()
-                except (KeyError, json.JSONDecodeError) as e:
-                    response.failure(f"解析响应失败: {str(e)}")
-            else:
-                response.failure(f"Status code: {response.status_code}")
 
 
