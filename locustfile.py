@@ -157,18 +157,25 @@ class HolidayTaskListBehavior(TaskSet):
     def on_start(self):
 
         #配置需要压测的目标假期作业id
-        self.holidayTaskId = self.user.holidaytaskId 
+        self.holidayTaskId = self.user.holidayTaskId 
 
     @task
     def open_holiday_task_list(self):
 
-        self.client.get("/api/usercenter/common/loginuserinfo/myinfo", headers=self.user.headers)
+        self.client.get("/api/usercenter/common/loginuserinfo/myinfo", 
+            name="/api/usercenter/common/loginuserinfo/myinfo",headers=self.user.headers)
 
-        self.client.get("/api/basicdata/common/dictionary/listbytypes?dictTypes=USERTYPE%2CSCHOOLTYPE%2CGRADEPHASE%2CGRADE%2CEXAMTYPE%2CQUESTIONTYPE%2CTCHROLE", headers=self.user.headers)
+        self.client.get("/api/basicdata/common/dictionary/listbytypes?dictTypes=USERTYPE%2CSCHOOLTYPE%2CGRADEPHASE%2CGRADE%2CEXAMTYPE%2CQUESTIONTYPE%2CTCHROLE", 
+            name="/api/basicdata/common/dictionary/listbytypes",
+            headers=self.user.headers)
 
-        self.client.get("/api/usercenter/common/loginuserinfo/terminfo", headers=self.user.headers)
+        self.client.get("/api/usercenter/common/loginuserinfo/terminfo", 
+            name="/api/usercenter/common/loginuserinfo/terminfo",
+            headers=self.user.headers)
 
-        with self.client.get("/api/usercenter/common/loginuserinfo/terminfo/base", headers=self.user.headers, catch_response=True) as response:
+        with self.client.get("/api/usercenter/common/loginuserinfo/terminfo/base", 
+            name="/api/usercenter/common/loginuserinfo/terminfo/base",
+            headers=self.user.headers, catch_response=True) as response:
             if response.status_code == 200:
                 
                 try:
@@ -194,13 +201,21 @@ class HolidayTaskListBehavior(TaskSet):
             "semester": self.user.semester
         }
 
-        self.client.get("/api/usercenter/common/school/course/list", headers=self.user.headers, params=params)
+        self.client.get("/api/usercenter/common/school/course/list", 
+            name="/api/usercenter/common/school/course/list",
+            headers=self.user.headers, params=params)
     
-        self.client.get("/api/usercenter/common/loginuserinfo/gatekeeper/list", headers=self.user.headers)
+        self.client.get("/api/usercenter/common/loginuserinfo/gatekeeper/list", 
+            name="/api/usercenter/common/loginuserinfo/gatekeeper/list",
+            headers=self.user.headers)
 
-        self.client.get("/api/usercenter/common/loginuserinfo/modulepermission", headers=self.user.headers)
+        self.client.get("/api/usercenter/common/loginuserinfo/modulepermission", 
+            name="/api/usercenter/common/loginuserinfo/modulepermission",
+            headers=self.user.headers)
 
-        self.client.get("/api/usercenter/common/loginuserinfo/myschool", headers=self.user.headers)
+        self.client.get("/api/usercenter/common/loginuserinfo/myschool", 
+            name="/api/usercenter/common/loginuserinfo/myschool",
+            headers=self.user.headers)
 
         params={
             "finished": False,
@@ -214,9 +229,13 @@ class HolidayTaskListBehavior(TaskSet):
             "pageSize":10
         }
         
-        self.client.get("/api/homework/student/holidaytask/homework/list", headers=self.user.headers,params=params)
+        self.client.get("/api/homework/student/holidaytask/homework/list", 
+            name="/api/homework/student/holidaytask/homework/list"
+            ,headers=self.user.headers,params=params)
         
-        self.client.get(f"/api/homework/student/holidaytask/listshelvedcourse?holidayTaskId={self.holidayTaskId}", headers=self.user.headers) 
+        self.client.get(f"/api/homework/student/holidaytask/listshelvedcourse?holidayTaskId={self.holidayTaskId}",
+        name="/api/homework/student/holidaytask/listshelvedcourse",
+         headers=self.user.headers) 
 
 #学生查看题目加视频的打卡任务
 class WatchVideoBehavior(TaskSet):
@@ -228,13 +247,14 @@ class WatchVideoBehavior(TaskSet):
         self.holidayVideoId = None
         self.videoId = None
 
-    @task
+    @task(1)
     def open_watch_video_page(self):
 
         self.client.get(f"/api/holidayvideo/student/holidayvideo/notice/list/byhomework?homeworkId={self.homeworkId}&videoType=VOD", headers=self.user.headers)
            
         with self.client.get(
             f"/api/holidayvideo/student/holidayvideo/info?homeworkId={self.homeworkId}",
+            name="/api/holidayvideo/student/holidayvideo/info?homeworkId",
             headers=self.user.headers,
             catch_response=True) as response:
             # print(f"响应状态码: {response.status_code}")
@@ -245,17 +265,24 @@ class WatchVideoBehavior(TaskSet):
                 try:
                     response_data = response.json()
                     self.holidayVideoId = response_data["data"]["holidayvideoId"]
-                    self.videoId = response_data["data"]["homeworkVideos"][0]["videoId"]
+                    # 题目+视频
+                    # self.videoId = response_data["data"]["homeworkVideos"][0]["videoId"]
+                    # 纯视频
+                    self.videoId = response_data["data"]["videos"][0]["videoId"]
                     response.success()
                 except Exception as e:
                     response.failure(f"解析响应失败: {str(e)}")
+                    print(f"解析响应失败: {str(e)}")
             else:
                 response.failure(f"Status code: {response.status_code}")
+                print(response.status_code,response.json())
 
-        self.client.get(f"/api/holidayvideo/student/holidayvideo/feedbackScore?holidayvideoId={self.holidayVideoId}", headers=self.user.headers)  
+        self.client.get(f"/api/holidayvideo/student/holidayvideo/feedbackScore?holidayvideoId={self.holidayVideoId}", 
+            name="/api/holidayvideo/student/holidayvideo/feedbackScore",
+            headers=self.user.headers)  
 
 
-    @task(0)
+    @task(1)
     def do_feedback(self):
 
         if self.holidayVideoId == None or self.videoId == None:
@@ -271,12 +298,16 @@ class WatchVideoBehavior(TaskSet):
             "score": 3
         }
 
-        self.client.put("/api/holidayvideo/student/holidayvideo/feedback", data=json.dumps(payload), headers=self.user.headers)
+        self.client.put("/api/holidayvideo/student/holidayvideo/feedback", 
+            name="/api/holidayvideo/student/holidayvideo/feedback",
+            data=json.dumps(payload), headers=self.user.headers)
 
 #学生查看拓展并完成训练（需要完善一下按查询到的未作答的题目进行提交）
 class DoOutdoorTraining(TaskSet):
     def on_start(self):
-        self.homeworkId = self.user.homeworkId
+        # self.homeworkId = self.user.homeworkId
+        self.homeworkId = 70073
+        self.questionId = None
     
     @task(1)
     def get_question_list(self):
@@ -289,13 +320,20 @@ class DoOutdoorTraining(TaskSet):
             "stuId": self.user.user_id
         }
 
-        self.client.post("/api/homework/student/homework/extraInfo",
+        with self.client.post("/api/homework/student/homework/extraInfo",
             data=json.dumps(payload),
-            headers=self.user.headers)
+            headers=self.user.headers)as rsp:
+            rsp_data = rsp.json().get("data",None)
 
-    @task(0)
-    def do_save():
+            try:
+                self.questionId = rsp_data[0].get("questionId",None)
+            except Exception as e:
+                print("解析失败")
 
+    @task(1)
+    def do_save(self):
+        if self.questionId == None:
+            return
         payload = {
             "homeworkId": self.homeworkId,
             "extraInfos": [
@@ -303,9 +341,9 @@ class DoOutdoorTraining(TaskSet):
                 "questionSeq": 1,
                 "questionExtraInfos": [
                     {
-                    "questionId": "1q02cftohg",
+                    "questionId": self.questionId,
                     "stuAnswer": [
-                        "C"
+                        "B"
                     ],
                     "stuAnswerImgUrl": []
                     }
@@ -452,8 +490,9 @@ class DownloadBehavior(TaskSet):
 
     @task
     def get_file_info(self):
-        self.client.get(f"/api/homework/student/holidaytask/homework/resource/get?homeworkId={self.homeworkId}&holidaytaskid={self.holidaytaskId}",headers=self.user.headers)
-                # print(resp.json())
+        self.client.get(f"/api/homework/student/holidaytask/homework/resource/get?homeworkId={self.homeworkId}&holidaytaskid={self.holidaytaskId}",
+            name="/api/homework/student/holidaytask/homework/resource/get",
+            headers=self.user.headers)
 
 #学生查看和提交自由出题练习
 class DoHomeworkFree(TaskSet):
@@ -515,18 +554,22 @@ class DoScheduleTask(TaskSet):
 
     @task
     def get_question_list(self):
-        self.client.get(f"/api/homework/student/holidaytask/homework/schedule/get?homeworkId={self.homeworkId}",headers=self.user.headers)
+        self.client.get(f"/api/homework/student/holidaytask/homework/schedule/get?homeworkId={self.homeworkId}",
+            name="/api/homework/student/holidaytask/homework/schedule/get",
+            headers=self.user.headers)
 
     #个性化打卡任务
     @task(0)
     def get_detail(self):
-        self.client.get(f"/api/homework/student/holidaytask/special/question/detail/list?homeworkId={self.homeworkId}",headers=self.user.headers)
+        self.client.get(f"/api/homework/student/holidaytask/special/question/detail/list?homeworkId={self.homeworkId}",
+            name="/api/homework/student/holidaytask/special/question/detail/list",
+            headers=self.user.headers)
 
     @task
     def do_save(self):
         payload = {
           "homeworkId": self.homeworkId,
-          "stuAnswer": "测试打卡任务提交啦啦啦，压力测试，压力测试，压力测试",
+          "stuAnswer": "测试打卡任务提交啦啦啦，压力测试，压力测试，压力测试修改了",
           "stuAnswerImgUrl": [
             "https://test-xueceresource.oss-cn-shanghai.aliyuncs.com/homework/student/3i0wezx/7ccf81e729524169ac2ceb4426aa5f2e1.jpeg",
             "https://test-xueceresource.oss-cn-shanghai.aliyuncs.com/homework/student/3i0wezx/b74a285a49134e7386b2599298bd935f1.jpeg",
@@ -537,8 +580,8 @@ class DoScheduleTask(TaskSet):
           ]
         }
 
-        with self.client.post("/api/homework/student/holidaytask/homework/schedule/save", data=json.dumps(payload), headers=self.user.headers) as resp:
-            print(resp.json())
+        self.client.post("/api/homework/student/holidaytask/homework/schedule/save", data=json.dumps(payload), headers=self.user.headers)
+    
 
 
 #教师查看练习监控
@@ -582,7 +625,7 @@ class tchMarkingList(TaskSet):
 #用户类
 class EcommerceUser(FastHttpUser):
     # wait_time = constant(5)
-    wait_time = between(0,0.1)
+    wait_time = between(0,1)
     tasks = [] # 将Task分配给用户
     # host = "https://xuece-xqdsj-stagingtest1.unisolution.cn"
     host = "http://xuece-xqdsj-stress.unisolution.cn"
@@ -600,7 +643,7 @@ class EcommerceUser(FastHttpUser):
                 
             # self.account = redis_loader.get_account()
             if self.account['account_type'] == 'stu':
-                self.tasks = [StuAskQuestion]
+                self.tasks = [HolidayTaskListBehavior,WatchVideoBehavior,DoOutdoorTraining,StuAskQuestion,DownloadBehavior,DoScheduleTask]
                 # self.wait_time = lambda: between(0,0.01)(self)
             else:
                 self.tasks = [tchMarkingList]
