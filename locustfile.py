@@ -640,11 +640,14 @@ class EcommerceUser(FastHttpUser):
             # 使用本地数据
             self.account = account_loader.get_account()
             # 开启redis使用分布式
-                
+            
+
+            print(self.account['account_type'])
             # self.account = redis_loader.get_account()
             if self.account['account_type'] == 'stu':
                 self.tasks = [HolidayTaskListBehavior,WatchVideoBehavior,DoOutdoorTraining,StuAskQuestion,DownloadBehavior,DoScheduleTask]
                 # self.wait_time = lambda: between(0,0.01)(self)
+                # self.tasks = [UserLoginBehavior]
             else:
                 self.tasks = [tchMarkingList]
                 # self.wait_time = lambda: between(1,5)(self)
@@ -658,6 +661,7 @@ class EcommerceUser(FastHttpUser):
             # print(self.account)
             self.holidayTaskId = self.account['holidayTaskId']
             self.homeworkId = self.account['homeworkId']
+            print("start login")
             self._login()
 
     def _login(self):

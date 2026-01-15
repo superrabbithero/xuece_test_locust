@@ -1,1 +1,12 @@
+# 核心依赖
 locust==2.37.5
+
+# 配置管理
+python-dotenv==1.0.0
+pyyaml==6.0.1
+
+# Redis支持
+redis==5.0.1
+
+# 日志增强（可选）
+colorlog==6.8.0
